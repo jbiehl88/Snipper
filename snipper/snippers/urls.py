@@ -2,5 +2,6 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('snippers/', views.snippers, name='snippers'),
+    path('snippets/', views.snippet_list, name='snippet_list'),               # Endpoint for GET and POST requests
+    path('snippets/<int:pk>/', views.snippet_detail, name='snippet_detail'),  # Endpoint for retrieving a snippet by ID
 ]
