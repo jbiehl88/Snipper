@@ -4,3 +4,7 @@
 *.pyd
 __pycache__/
 myworld/
+.env
+fernet.key
+Fernet_Key.py
+encode.py
