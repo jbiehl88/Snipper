@@ -1,8 +1,11 @@
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
-from .serializers import SnippetSerializer
+from .serializers import SnippetSerializer, UserSerializer
 from .utils import encrypt_content, decrypt_content
+from django.contrib.auth.models import User
+from django.contrib.auth.hashers import make_password, check_password
+
 
 snippets = [
     {
@@ -47,6 +50,8 @@ snippets = [
     }
 ]
 
+users = []
+
 @api_view(['GET', 'POST'])
 def snippet_list(request):
     if request.method == 'GET':
@@ -85,3 +90,37 @@ def snippet_detail(request, pk):
         return Response(status=status.HTTP_404_NOT_FOUND)
     decrypted_snippet = {**snippet, 'code': decrypt_content(snippet['code'])}
     return Response(decrypted_snippet)
+
+@api_view(['GET', 'POST'])
+def user_view(request):
+    if request.method == 'POST':
+        serializer = UserSerializer(data=request.data)
+        if serializer.is_valid():
+            # Hash the password before saving
+            hashed_password = make_password(serializer.validated_data['password'])
+
+            # Create the user object with the hashed password
+            user = {
+                'id': len(users) + 1,
+                'email': serializer.validated_data['email'],
+                'password': hashed_password
+            }
+            users.append(user)
+            return Response("Account for " + user['email'] + " was successfully created!", status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    elif request.method == 'GET':
+    # User authentication logic (GET method)
+      email = request.query_params.get('email')
+      password = request.query_params.get('password')
+
+      if not email or not password:
+          return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+      user = next((u for u in users if u['email'] == email), None)
+
+      if user and check_password(password, user['password']):
+          return Response({"email": user['email']})
+      else:
+          return Response({"error": "Invalid credentials"}, status=status.HTTP_403_FORBIDDEN)
