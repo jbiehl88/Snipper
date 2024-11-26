@@ -1,11 +1,16 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status
 from .serializers import SnippetSerializer, UserSerializer
 from .utils import encrypt_content, decrypt_content
-from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password, check_password
+from rest_framework.permissions import IsAuthenticated, AllowAny
+import jwt
+from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
+import os
 
+load_dotenv()
 
 snippets = [
     {
@@ -91,36 +96,70 @@ def snippet_detail(request, pk):
     decrypted_snippet = {**snippet, 'code': decrypt_content(snippet['code'])}
     return Response(decrypted_snippet)
 
-@api_view(['GET', 'POST'])
-def user_view(request):
-    if request.method == 'POST':
-        serializer = UserSerializer(data=request.data)
-        if serializer.is_valid():
-            # Hash the password before saving
-            hashed_password = make_password(serializer.validated_data['password'])
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def create_user(request):
+    serializer = UserSerializer(data=request.data)
+    if serializer.is_valid():
+        # Hash the password before saving
+        hashed_password = make_password(serializer.validated_data['password'])
 
-            # Create the user object with the hashed password
-            user = {
-                'id': len(users) + 1,
-                'email': serializer.validated_data['email'],
-                'password': hashed_password
+        # Create the user object with the hashed password
+        user = {
+            'id': len(users) + 1,
+            'email': serializer.validated_data['email'],
+            'password': hashed_password
+        }
+        users.append(user)
+
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
+
+        user_in_db = next((u for u in users if u['email'] == email), None)
+
+        if user_in_db and check_password(password, user_in_db['password']):
+            payload = {
+                'id': user_in_db['id'],
+                'email': user_in_db['email'],
+                'exp': datetime.now(timezone.utc) + timedelta(hours=24),
+                'iat': datetime.now(timezone.utc)
             }
-            users.append(user)
-            return Response("Account for " + user['email'] + " was successfully created!", status=status.HTTP_201_CREATED)
-        else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    elif request.method == 'GET':
-    # User authentication logic (GET method)
-      email = request.query_params.get('email')
-      password = request.query_params.get('password')
+            secret_key = os.getenv("SECRET_KEY")
+            # Encode the payload using the secret key to create the token
+            token = jwt.encode(payload, secret_key, algorithm='HS256')
 
-      if not email or not password:
-          return Response({"error": "Email and password are required"}, status=status.HTTP_400_BAD_REQUEST)
+            print(f"Generated Token: {token}")
 
-      user = next((u for u in users if u['email'] == email), None)
+            return Response({
+                "message": f"Account for {email} was successfully created!",
+                "token": token
+            }, status=status.HTTP_201_CREATED)
+    else:
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-      if user and check_password(password, user['password']):
-          return Response({"email": user['email']})
-      else:
-          return Response({"error": "Invalid credentials"}, status=status.HTTP_403_FORBIDDEN)
+# GET method for retrieving user info (requires JWT authentication)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_user(request):
+    print("*******HELLO******")
+    auth = request.headers.get('Authorization')
+    if not auth:
+        return Response({"error": "Authorization header missing"}, status=status.HTTP_400_BAD_REQUEST)
+
+    token = auth.split(' ')[1]  # Extract token from Authorization header
+    try:
+        payload = jwt.decode(token, os.getenv("SECRET_KEY"), algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return Response({"error": "Token has expired"}, status=status.HTTP_401_UNAUTHORIZED)
+    except jwt.InvalidTokenError:
+        return Response({"error": "Invalid token"}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Find the user based on the email in the payload
+    user_email = payload.get('email')
+    user = next((u for u in users if u['email'] == user_email), None)
+    
+    if user:
+        return Response({"email": user['email'], "id": user['id']})
+    else:
+        return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
